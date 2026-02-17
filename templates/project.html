@@ -1,0 +1,91 @@
+{% extends "base.html" %} {% block title %}{{ pid }}{% endblock %} {% block body_class %}container bg-light{% endblock
+%} {% block main_class %}{% endblock %} {% block extra_head %}
+<link rel="stylesheet" href="/static/potree/build/potree/potree.css" />
+
+<style>
+  body {
+    position: relative !important;
+    overflow-y: scroll;
+  }
+
+  #potree_container {
+    width: 100%;
+    height: calc(100vh - 200px);
+    position: relative;
+    background: #ffffff;
+    overflow: hidden;
+    border-radius: 12px;
+  }
+
+  #viewer_toolbar {
+    position: absolute;
+    z-index: 1000;
+    top: 12px;
+    left: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 10px 12px;
+    border-radius: 10px;
+    color: white;
+  }
+</style>
+{% endblock %} {% block content %}
+
+<div id="potree_container">
+  <div id="viewer_toolbar">
+    <span class="pid">{{ pid }}</span>
+    <button class="btn btn-sm btn-light" id="btnMeasureDistance">Measure distance</button>
+    <button class="btn btn-sm btn-light" id="btnMeasureArea">Measure area</button>
+    <button class="btn btn-sm btn-light" id="btnClear">Clear</button>
+    <a class="btn btn-sm btn-warning" href="/download/{{ pid }}/e57"> <i class="bi bi-download"></i> E57 </a>
+    <a class="btn btn-sm btn-outline-light" href="/dashboard">Back</a>
+  </div>
+</div>
+
+{% endblock %} {% block body_scripts %}
+
+<script src="/static/potree/libs/jquery/jquery-3.1.1.min.js"></script>
+<script src="/static/potree/libs/three.js/build/three.min.js"></script>
+<script src="/static/potree/libs/proj4/proj4.js"></script>
+<script src="/static/potree/build/potree/potree.js"></script>
+
+<script>
+  const viewer = new Potree.Viewer(document.getElementById('potree_container'));
+  viewer.setEDLEnabled(true);
+  viewer.setFOV(84);
+  viewer.setPointBudget(1500000);
+  viewer.setBackground('white');
+
+  // IMPORTANT: Use signed redirect endpoint
+  const cloudUrl = '/cf/projects/{{ pid }}/viewer/potree/cloud.js';
+
+  Potree.loadPointCloud(cloudUrl, '{{ pid }}', (e) => {
+    viewer.scene.addPointCloud(e.pointcloud);
+    viewer.fitToScreen();
+  });
+
+  document.getElementById('btnMeasureDistance').onclick = () => {
+    viewer.measuringTool.startInsertion({
+      showDistances: true,
+      closed: false,
+      maxMarkers: 2,
+    });
+  };
+
+  document.getElementById('btnMeasureArea').onclick = () => {
+    viewer.measuringTool.startInsertion({
+      showDistances: true,
+      showArea: true,
+      closed: true,
+    });
+  };
+
+  document.getElementById('btnClear').onclick = () => {
+    const toRemove = [...viewer.scene.measurements];
+    for (const m of toRemove) viewer.scene.removeMeasurement(m);
+  };
+</script>
+
+{% endblock %}

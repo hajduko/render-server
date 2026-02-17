@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{% block title %}{% endblock %} - SaWin Render Utility</title>
+
+    <!-- Import Bootstrap styles and icons -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+      crossorigin="anonymous" />
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+      crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" />
+
+    <!-- Import custom styles and favicon -->
+    <link rel="icon" type="image/png" href="/static/favicon.svg" />
+    <link rel="stylesheet" href="/static/style.css" />
+
+    {% block extra_head %}{% endblock %}
+  </head>
+  <body class="{% block body_class %}container bg-light{% endblock %}">
+    <header class="d-flex flex-row justify-content-between py-4">
+      <h1>SaWin Render Utility</h1>
+      <nav class="d-flex align-items-center gap-3">
+        {% if user %}
+        <span>{{ user.email }} {% if user.is_admin %} as Admin {% endif %} </span> |
+        <a class="btn btn-primary" href="/logout">Logout</a>
+        {% endif %}
+      </nav>
+    </header>
+
+    <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
+
+    <footer class="my-4">
+      <hr />
+      <div class="d-flex flex-row justify-content-between">
+        <small>{{ 2025 }} - SaWin Energy &copy; All rights reserved</small>
+        <small
+          >For support contact us:
+          <a class="link-primary link-underline-opacity-0" href="mailto:kolos@sawin.hu">kolos@sawin.hu</a></small
+        >
+      </div>
+    </footer>
+
+    {% block body_scripts %}{% endblock %}
+  </body>
+</html>
