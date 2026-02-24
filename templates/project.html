@@ -31,8 +31,15 @@
     color: white;
   }
 </style>
-{% endblock %} {% block content %}
-
+{% endblock %} {% block content %} {% if not has_potree %}
+<div class="alert alert-warning">
+  <h4 class="mb-1">Project {{ pid }}</h4>
+  <div>No pointcloud viewer data found yet.</div>
+  <div class="mt-3">
+    <a class="btn btn-primary" href="/dashboard">Back</a>
+  </div>
+</div>
+{% else %}
 <div id="potree_container">
   <div id="viewer_toolbar">
     <span class="pid">{{ pid }}</span>
@@ -43,14 +50,24 @@
     <a class="btn btn-sm btn-outline-light" href="/dashboard">Back</a>
   </div>
 </div>
-
-{% endblock %} {% block body_scripts %}
+{% endif %} {% if images %}
+<h2 class="py-2">Images</h2>
+{% for img in images %}
+<img src="{{ img }}" style="width: 33%" class="p-1" />
+{% endfor %} {% endif %} {% if videos %}
+<h2 class="py-2">Videos</h2>
+{% for vid in videos %}
+<video controls width="600" style="width: 49%" class="p-1">
+  <source src="{{ vid }}" />
+</video>
+{% endfor %} {% endif %} {% endblock %} {% block body_scripts %}
 
 <script src="/static/potree/libs/jquery/jquery-3.1.1.min.js"></script>
 <script src="/static/potree/libs/three.js/build/three.min.js"></script>
 <script src="/static/potree/libs/proj4/proj4.js"></script>
 <script src="/static/potree/build/potree/potree.js"></script>
 
+{% if has_potree %}
 <script>
   const viewer = new Potree.Viewer(document.getElementById('potree_container'));
   viewer.setEDLEnabled(true);
@@ -58,8 +75,7 @@
   viewer.setPointBudget(1500000);
   viewer.setBackground('white');
 
-  // IMPORTANT: Use signed redirect endpoint
-  const cloudUrl = '/cf/projects/{{ pid }}/viewer/potree/cloud.js';
+  const cloudUrl = '{{ cloud_js }}';
 
   Potree.loadPointCloud(cloudUrl, '{{ pid }}', (e) => {
     viewer.scene.addPointCloud(e.pointcloud);
@@ -87,5 +103,4 @@
     for (const m of toRemove) viewer.scene.removeMeasurement(m);
   };
 </script>
-
-{% endblock %}
+{% endif %} {% endblock %}

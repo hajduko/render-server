@@ -136,7 +136,31 @@ class CompleteRequest(BaseModel):
     pid: str
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".tif", ".tiff")
-OTHER_EXTS = IMAGE_EXTS + (".mp4")
+OTHER_EXTS = IMAGE_EXTS + (".mp4",)
+VIDEO_EXTS = (".mp4",)
+
+def _list_s3_keys(bucket: str, prefix: str) -> List[str]:
+    """List all object keys under a prefix (handles pagination)."""
+    keys: List[str] = []
+    token: Optional[str] = None
+
+    while True:
+        kwargs = {"Bucket": bucket, "Prefix": prefix}
+        if token:
+            kwargs["ContinuationToken"] = token
+
+        resp = s3.list_objects_v2(**kwargs)
+        for obj in resp.get("Contents", []):
+            k = obj.get("Key")
+            if k and not k.endswith("/"):
+                keys.append(k)
+
+        if resp.get("IsTruncated"):
+            token = resp.get("NextContinuationToken")
+        else:
+            break
+
+    return keys
 
 def _safe_name(filename: str) -> str:
     return os.path.basename(filename).replace("\\", "/").split("/")[-1]
@@ -264,9 +288,47 @@ async def upload_complete(req: CompleteRequest, user=Depends(get_current_user)):
 # ---------- Viewer + signed redirect for Potree ----------
 @app.get("/project/{pid}", response_class=HTMLResponse)
 async def project_view(request: Request, pid: str = Path(...), user=Depends(get_current_user)):
-    # Potree will request many files; route through /cf/... so each request gets signed.
-    cloud_js = f"/cf/projects/{pid}/viewer/potree/cloud.js"
-    return templates.TemplateResponse("project.html", {"request": request, "user": user, "pid": pid, "cloud_js": cloud_js})
+    # ---- 1) Detect Potree: check if cloud.js exists in S3 under viewer/potree/ ----
+    potree_prefix = f"projects/{pid}/viewer/potree/"
+    cloud_js_key = potree_prefix + "cloud.js"
+
+    has_potree = s3_key_exists(S3_BUCKET, cloud_js_key)
+
+    # This is the URL your template should load for Potree (signed via /cf redirect)
+    # If has_potree is False, you can still pass it; template can hide viewer.
+    cloud_js = f"/cf/{cloud_js_key}"
+
+    # ---- 2) List "others" media files from S3 ----
+    others_prefix = f"projects/{pid}/input/others/"
+    keys = _list_s3_keys(S3_BUCKET, others_prefix)
+
+    images: List[str] = []
+    videos: List[str] = []
+
+    for key in keys:
+        name = key.rsplit("/", 1)[-1]
+        ext = os.path.splitext(name)[1].lower()
+
+        if ext in IMAGE_EXTS:
+            images.append(f"/cf/{key}")   # signed redirect per request
+        elif ext in VIDEO_EXTS:
+            videos.append(f"/cf/{key}")
+
+    images.sort()
+    videos.sort()
+
+    return templates.TemplateResponse(
+        "project.html",
+        {
+            "request": request,
+            "user": user,
+            "pid": pid,
+            "has_potree": has_potree,
+            "cloud_js": cloud_js,   # keep this name if your template expects cloud_js
+            "images": images,
+            "videos": videos,
+        },
+    )
 
 @app.get("/cf/{path:path}")
 async def cf_signed_redirect(path: str, user=Depends(get_current_user)):
