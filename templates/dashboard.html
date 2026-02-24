@@ -19,7 +19,13 @@
               <input id="others" class="form-control w-100" type="file" name="others" multiple />
             </div>
 
-            <button class="btn btn-primary w-100" type="submit">Upload project</button>
+            <button
+              id="submit-btn"
+              class="btn btn-primary w-100 d-flex justify-content-center align-items-center"
+              type="submit">
+              <span class="btn-text">Upload project</span>
+              <span class="spinner-border spinner-border-sm ms-2 d-none" role="status"></span>
+            </button>
 
             <progress id="progress" class="progress w-100" value="0" max="100"></progress>
           </div>
@@ -68,6 +74,9 @@
     const fileElem = document.getElementById('files');
     const othersElem = document.getElementById('others');
     const progress = document.getElementById('progress');
+    const submitBtn = document.getElementById('submit-btn');
+    const btnText = submitBtn.querySelector('.btn-text');
+    const spinner = submitBtn.querySelector('.spinner-border');
 
     if (!form || !fileElem || !othersElem || !progress) return;
 
@@ -139,6 +148,12 @@
 
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
+      // Disable button + show spinner
+      submitBtn.disabled = true;
+      spinner.classList.remove('d-none');
+      btnText.textContent = 'Uploading...';
+      submitBtn.classList.remove('btn-primary');
+      submitBtn.classList.add('btn-secondary');
 
       const pid = (form.querySelector('input[name="pid"]').value || '').trim();
       if (!pid) return alert('Missing LEAD code');
@@ -186,6 +201,9 @@
         window.location.href = '/dashboard';
       } catch (err) {
         console.error(err);
+        submitBtn.disabled = false;
+        spinner.classList.add('d-none');
+        btnText.textContent = 'Upload project';
         alert('Upload failed: ' + (err && err.message ? err.message : err));
       }
     });
