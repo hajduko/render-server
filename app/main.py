@@ -15,6 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from itsdangerous import URLSafeSerializer
 
+from pydantic import BaseModel
+
 from .config import (
     SESSION_SECRET, REDIRECT_PATH,
     AWS_REGION, S3_BUCKET, SQS_QUEUE_URL, DDB_PROJECTS, DDB_JOBS,
@@ -27,7 +29,7 @@ from .cloudfront_sign import sign_cloudfront_url
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # you can lock this down later
+    allow_origins=["https://render.sawin.hu"],  # you can lock this down later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,7 +53,7 @@ ddb = boto3.client("dynamodb", region_name=AWS_REGION)
 def now_epoch() -> int:
     return int(time.time())
 
-# ---------- Auth dependencies (copied behavior) ----------
+# ---------- Auth dependencies ----------
 def get_current_user(request: Request):
     user = request.session.get("user")
     if not user:
@@ -64,7 +66,7 @@ def require_admin(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return user
 
-# ---------- Root/login/callback/logout (copied flow) ----------
+# ---------- Root/login/callback/logout ----------
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     user = request.session.get("user")
@@ -120,6 +122,28 @@ async def logout(request: Request):
     return RedirectResponse(url="/")
 
 # ---------- AWS-backed dashboard logic ----------
+
+class PresignFile(BaseModel):
+    name: str
+    content_type: str
+
+class PresignRequest(BaseModel):
+    pid: str
+    files: List[PresignFile] = []
+    others: List[PresignFile] = []
+
+class CompleteRequest(BaseModel):
+    pid: str
+
+IMAGE_EXTS = (".jpg", ".jpeg", ".tif", ".tiff")
+OTHER_EXTS = IMAGE_EXTS + (".mp4")
+
+def _safe_name(filename: str) -> str:
+    return os.path.basename(filename).replace("\\", "/").split("/")[-1]
+
+def _key(pid: str, kind: str, name: str) -> str:
+    return f"projects/{pid}/input/{kind}/{_safe_name(name)}"
+
 def ddb_put_project(pid: str, user_email: str):
     ddb.put_item(
         TableName=DDB_PROJECTS,
@@ -183,48 +207,59 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
     projects.sort(key=lambda x: x["pid"].lower())
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": user, "projects": projects})
 
-@app.post("/upload")
-async def upload_images(request: Request, user=Depends(get_current_user)):
-    # keep your form style: pid + files + others
-    form = await request.form(max_files=10000, max_fields=10001)
-
-    pid = str(form.get("pid", "")).strip()
+@app.post("/upload/presign")
+async def upload_presign(req: PresignRequest, user=Depends(get_current_user)):
+    pid = req.pid.strip()
     if not pid:
         raise HTTPException(400, "Missing project_id")
 
-    files = form.getlist("files")
-    if not files:
-        raise HTTPException(400, "No files received")
+    uploads = []
 
-    # Upload images
-    saved = 0
-    for f in files:
-        name = os.path.basename(f.filename)
-        if not name.lower().endswith((".jpg", ".jpeg", ".tif", ".tiff")):
+    for f in req.files:
+        name = _safe_name(f.name)
+        if not name.lower().endswith(IMAGE_EXTS):
             continue
-        key = f"projects/{pid}/input/images/{name}"
-        s3.upload_fileobj(f.file, S3_BUCKET, key)
-        saved += 1
+        key = _key(pid, "images", name)
+        url = s3.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": S3_BUCKET, "Key": key, "ContentType": f.content_type or "application/octet-stream"},
+            ExpiresIn=3600,
+        )
+        uploads.append({"name": name, "key": key, "url": url, "content_type": f.content_type, "kind": "images"})
 
-    if saved == 0:
-        raise HTTPException(400, "No valid image files uploaded")
-
-    # Upload others (optional)
-    others = form.getlist("others")
-    for f in others:
-        name = os.path.basename(f.filename)
-        if not name.lower().endswith((".jpg", ".jpeg", ".tif", ".tiff", ".avi", ".mp4")):
+    for f in req.others:
+        name = _safe_name(f.name)
+        if not name.lower().endswith(OTHER_EXTS):
             continue
-        key = f"projects/{pid}/input/others/{name}"
-        s3.upload_fileobj(f.file, S3_BUCKET, key)
+        key = _key(pid, "others", name)
+        url = s3.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": S3_BUCKET, "Key": key, "ContentType": f.content_type or "application/octet-stream"},
+            ExpiresIn=3600,
+        )
+        uploads.append({"name": name, "key": key, "url": url, "content_type": f.content_type, "kind": "others"})
 
-    # Create DDB records + enqueue SQS job
+    if not uploads:
+        raise HTTPException(400, "No valid files to upload")
+
+    return {"pid": pid, "uploads": uploads}
+
+@app.post("/upload/complete")
+async def upload_complete(req: CompleteRequest, user=Depends(get_current_user)):
+    pid = req.pid.strip()
+    if not pid:
+        raise HTTPException(400, "Missing project_id")
+
+    # Optional sanity check: at least one image exists
+    resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=f"projects/{pid}/input/images/", MaxKeys=1)
+    if not resp.get("Contents"):
+        raise HTTPException(400, "No images found in S3 for this pid")
+
     job_id = str(uuid.uuid4())
     ddb_put_project(pid, user_email=user["email"])
     ddb_put_job(job_id, pid, user)
     sqs_enqueue(job_id, pid, user)
-
-    return RedirectResponse("/dashboard", status_code=302)
+    return {"ok": True, "pid": pid, "job_id": job_id}
 
 # ---------- Viewer + signed redirect for Potree ----------
 @app.get("/project/{pid}", response_class=HTMLResponse)
@@ -268,3 +303,7 @@ async def project_logs(request: Request, pid: str, user=Depends(get_current_user
         "logs.html",
         {"request": request, "user": user, "pid": pid, "keys": keys, "log_text": log_text},
     )
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
