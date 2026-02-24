@@ -7,7 +7,7 @@ from typing import Optional, Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
-from fastapi import FastAPI, Request, Depends, Form, HTTPException, Path
+from fastapi import FastAPI, Request, Depends, Form, HTTPException, Path, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -349,21 +349,64 @@ async def download_e57(pid: str, user=Depends(get_current_user)):
 
 # ---------- Logs page ----------
 @app.get("/logs/{pid}", response_class=HTMLResponse)
-async def project_logs(request: Request, pid: str, user=Depends(get_current_user)):
+async def project_logs(
+    request: Request,
+    pid: str,
+    file: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
     prefix = f"projects/{pid}/output/logs/"
     resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
 
-    keys = [o["Key"] for o in resp.get("Contents", []) if o["Key"].endswith(".log")]
+    # Collect .log files
+    keys = [
+        o["Key"]
+        for o in resp.get("Contents", [])
+        if o["Key"].endswith(".log")
+    ]
+
     keys.sort(reverse=True)
 
-    log_text = ""
-    if keys:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=keys[0])
-        log_text = obj["Body"].read().decode("utf-8", errors="replace")
+    if not keys:
+        return templates.TemplateResponse(
+            "logs.html",
+            {
+                "request": request,
+                "user": user,
+                "pid": pid,
+                "keys": [],
+                "log_text": "",
+                "selected_file": None,
+            },
+        )
+
+    # Determine which file to show
+    selected_key = None
+
+    if file:
+        # Ensure file exists and prevent path traversal
+        expected_key = f"{prefix}{file}"
+        if expected_key not in keys:
+            raise HTTPException(404, "Log file not found")
+        selected_key = expected_key
+    else:
+        # Default: newest
+        selected_key = keys[0]
+
+    # Load selected log
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=selected_key)
+    log_text = obj["Body"].read().decode("utf-8", errors="replace")
 
     return templates.TemplateResponse(
         "logs.html",
-        {"request": request, "user": user, "pid": pid, "keys": keys, "log_text": log_text},
+        {
+            "request": request,
+            "user": user,
+            "pid": pid,
+            "keys": keys,
+            "log_text": log_text,
+            "selected_file": selected_key.split("/")[-1],
+        },
     )
 
 @app.get("/health")
