@@ -192,7 +192,7 @@
         });
 
         // 2) Upload to S3 with concurrency (tune 5–10)
-        await uploadWithConcurrency(uploads, 8, bump);
+        await uploadWithConcurrency(uploads, 6, bump);
 
         // 3) Tell server to create DDB items + enqueue SQS job
         await fetchJson('/upload/complete', { pid });
