@@ -18,7 +18,7 @@ from itsdangerous import URLSafeSerializer
 from .config import (
     SESSION_SECRET, REDIRECT_PATH,
     AWS_REGION, S3_BUCKET, SQS_QUEUE_URL, DDB_PROJECTS, DDB_JOBS,
-    CLOUDFRONT_DOMAIN, CLOUDFRONT_KEY_PAIR_ID, CLOUDFRONT_PRIVATE_KEY_PATH,
+    CLOUDFRONT_DOMAIN, CLOUDFRONT_KEY_PAIR_ID,
 )
 from .auth import get_auth_url, acquire_token_by_authorization_code
 from .cloudfront_sign import sign_cloudfront_url
@@ -239,7 +239,6 @@ async def cf_signed_redirect(path: str, user=Depends(get_current_user)):
     signed = sign_cloudfront_url(
         resource_url=resource_url,
         key_pair_id=CLOUDFRONT_KEY_PAIR_ID,
-        private_key_pem_path=CLOUDFRONT_PRIVATE_KEY_PATH,
         expires_in_seconds=3600,
     )
     return RedirectResponse(url=signed, status_code=302)
