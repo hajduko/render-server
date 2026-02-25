@@ -23,7 +23,7 @@
               id="submit-btn"
               class="btn btn-primary w-100 d-flex justify-content-center align-items-center"
               type="submit">
-              <span class="btn-text">Upload project</span>
+              <span class="btn-text"><i class="bi bi-upload"></i> Upload project</span>
               <span class="spinner-border spinner-border-sm ms-2 d-none" role="status"></span>
             </button>
 
@@ -52,10 +52,12 @@
               <th>{{ project.pid }}</th>
               <td>{{ project.status }}</td>
               <td>
-                <a href="/project/{{ project.pid }}" class="btn btn-success"> <i class="bi bi-cube"></i> View </a>
+                <a href="/project/{{ project.pid }}" class="btn btn-success"><i class="bi bi-house-check"></i> View </a>
+                {% if user.is_admin %}
                 <a href="/logs/{{ project.pid }}" class="btn btn-outline-secondary ms-2">
                   <i class="bi bi-file-text"></i> Logs
                 </a>
+                {% endif %}
               </td>
             </tr>
             {% endfor %}

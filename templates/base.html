@@ -28,7 +28,7 @@
       <nav class="d-flex align-items-center gap-3">
         {% if user %}
         <span>{{ user.email }} {% if user.is_admin %} as Admin {% endif %} </span> |
-        <a class="btn btn-primary" href="/logout">Logout</a>
+        <a class="btn btn-primary" href="/logout">Logout <i class="bi bi-box-arrow-right"></i></a>
         {% endif %}
       </nav>
     </header>
