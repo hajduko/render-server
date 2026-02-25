@@ -27,7 +27,17 @@
               <span class="spinner-border spinner-border-sm ms-2 d-none" role="status"></span>
             </button>
 
-            <progress id="progress" class="progress w-100" value="0" max="100"></progress>
+            <div class="progress w-100 mb-2" style="height: 28px">
+              <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">
+                0%
+              </div>
+            </div>
+
+            <div class="small text-muted">
+              <div><strong>Current file:</strong> <span id="currentFile">—</span></div>
+              <div><strong>Uploaded:</strong> <span id="uploadedInfo">0 MB / 0 MB</span></div>
+              <div><strong>Estimated time remaining:</strong> <span id="eta">—</span></div>
+            </div>
           </div>
         </form>
       </div>
@@ -75,12 +85,37 @@
     const form = document.getElementById('upload-form');
     const fileElem = document.getElementById('files');
     const othersElem = document.getElementById('others');
-    const progress = document.getElementById('progress');
-    const submitBtn = document.getElementById('submit-btn');
-    const btnText = submitBtn.querySelector('.btn-text');
-    const spinner = submitBtn.querySelector('.spinner-border');
 
-    if (!form || !fileElem || !othersElem || !progress) return;
+    // Bootstrap progress bar elements
+    const progressBar = document.getElementById('progressBar');
+    const currentFileEl = document.getElementById('currentFile');
+    const uploadedInfoEl = document.getElementById('uploadedInfo');
+    const etaEl = document.getElementById('eta');
+
+    const submitBtn = document.getElementById('submit-btn');
+    const btnText = submitBtn?.querySelector('.btn-text');
+    const spinner = submitBtn?.querySelector('.spinner-border');
+
+    if (!form || !fileElem || !othersElem || !progressBar) return;
+
+    const formatMB = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+
+    const formatTime = (seconds) => {
+      if (!isFinite(seconds) || seconds < 0) return '—';
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    };
+
+    const setProgressUI = (percent, fileName, uploadedBytes, totalBytes, etaSec) => {
+      const pct = Math.max(0, Math.min(100, percent));
+      progressBar.style.width = pct.toFixed(1) + '%';
+      progressBar.textContent = pct.toFixed(1) + '%';
+
+      if (currentFileEl) currentFileEl.textContent = fileName || '—';
+      if (uploadedInfoEl) uploadedInfoEl.textContent = `${formatMB(uploadedBytes)} MB / ${formatMB(totalBytes)} MB`;
+      if (etaEl) etaEl.textContent = formatTime(etaSec);
+    };
 
     function buildFileList(input) {
       return Array.from(input.files || []).map((f) => ({
@@ -97,6 +132,7 @@
         credentials: 'same-origin',
         body: JSON.stringify(bodyObj),
       });
+
       const txt = await res.text();
       let data;
       try {
@@ -104,23 +140,33 @@
       } catch {
         data = { raw: txt };
       }
+
       if (!res.ok) throw new Error((data && (data.detail || data.message)) || res.status + ' ' + res.statusText);
       return data;
     }
 
-    // Upload with limited concurrency to avoid saturating browser/network
-    async function uploadWithConcurrency(items, limit, onProgressBytes) {
+    // Upload with limited concurrency to avoid saturating browser/network.
+    // NOTE: fetch() doesn't provide reliable upload progress events, so we:
+    // - show "current file" when a file starts uploading
+    // - bump bytes when the file finishes (per-file progress)
+    async function uploadWithConcurrency(items, limit, onFileStart, onFileDone) {
       let idx = 0;
       let inFlight = 0;
+      let doneCount = 0;
+      let settled = false;
 
       return new Promise((resolve, reject) => {
-        const results = [];
         const next = () => {
+          if (settled) return;
+
           while (inFlight < limit && idx < items.length) {
             const item = items[idx++];
             inFlight++;
 
-            // PUT directly to S3 presigned URL
+            try {
+              onFileStart?.(item);
+            } catch (_) {}
+
             fetch(item.url, {
               method: 'PUT',
               headers: { 'Content-Type': item.type || 'application/octet-stream' },
@@ -131,47 +177,96 @@
                   const t = await r.text().catch(() => '');
                   throw new Error(`S3 upload failed for ${item.name}: ${r.status} ${r.statusText} ${t}`);
                 }
-                // We can’t get per-request byte progress with fetch reliably,
-                // so we update progress per-file by file size:
-                onProgressBytes(item.file.size);
-                results.push(true);
+                try {
+                  onFileDone?.(item);
+                } catch (_) {}
+
+                doneCount++;
+                if (doneCount === items.length) {
+                  settled = true;
+                  resolve(true);
+                }
               })
-              .catch(reject)
+              .catch((err) => {
+                if (!settled) {
+                  settled = true;
+                  reject(err);
+                }
+              })
               .finally(() => {
                 inFlight--;
-                if (results.length === items.length) resolve(true);
-                else next();
+                next();
               });
           }
         };
+
         next();
       });
     }
 
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
-      // Disable button + show spinner
-      submitBtn.disabled = true;
-      spinner.classList.remove('d-none');
-      btnText.textContent = 'Uploading...';
-      submitBtn.classList.remove('btn-primary');
-      submitBtn.classList.add('btn-secondary');
 
-      const pid = (form.querySelector('input[name="pid"]').value || '').trim();
-      if (!pid) return alert('Missing LEAD code');
+      // Disable button + show spinner
+      if (submitBtn) submitBtn.disabled = true;
+      if (spinner) spinner.classList.remove('d-none');
+      if (btnText) btnText.textContent = 'Uploading...';
+      if (submitBtn) {
+        submitBtn.classList.remove('btn-primary');
+        submitBtn.classList.add('btn-secondary');
+      }
+
+      const pid = (form.querySelector('input[name="pid"]')?.value || '').trim();
+      if (!pid) {
+        alert('Missing LEAD code');
+        if (submitBtn) submitBtn.disabled = false;
+        if (spinner) spinner.classList.add('d-none');
+        if (btnText) btnText.textContent = 'Upload project';
+        return;
+      }
 
       const images = buildFileList(fileElem);
       const others = buildFileList(othersElem);
-      if (images.length === 0) return alert('No photos selected');
 
-      progress.value = 0;
+      if (images.length === 0) {
+        alert('No photos selected');
+        if (submitBtn) submitBtn.disabled = false;
+        if (spinner) spinner.classList.add('d-none');
+        if (btnText) btnText.textContent = 'Upload project';
+        return;
+      }
 
       // Total bytes for progress
       const totalBytes = images.reduce((a, x) => a + x.file.size, 0) + others.reduce((a, x) => a + x.file.size, 0);
+
       let uploadedBytes = 0;
-      const bump = (n) => {
-        uploadedBytes += n;
-        progress.value = totalBytes ? (uploadedBytes / totalBytes) * 100 : 0;
+      let startTime = Date.now();
+
+      // initialize UI
+      setProgressUI(0, '—', 0, totalBytes, Infinity);
+
+      const recomputeAndRender = (fileName) => {
+        const percent = totalBytes ? (uploadedBytes / totalBytes) * 100 : 0;
+
+        const elapsedSec = (Date.now() - startTime) / 1000;
+        const speed = elapsedSec > 0 ? uploadedBytes / elapsedSec : 0; // bytes/sec
+        const remainingBytes = Math.max(0, totalBytes - uploadedBytes);
+
+        // ETA in seconds; Infinity if we don't have a speed estimate yet
+        const etaSec = speed > 0 ? remainingBytes / speed : Infinity;
+
+        setProgressUI(percent, fileName, uploadedBytes, totalBytes, etaSec);
+      };
+
+      const onFileStart = (item) => {
+        // Show current file immediately when it begins uploading
+        if (currentFileEl) currentFileEl.textContent = item?.name || '—';
+      };
+
+      const onFileDone = (item) => {
+        // We only know bytes reliably once a file completes with fetch()
+        uploadedBytes += item.file.size;
+        recomputeAndRender(item?.name);
       };
 
       try {
@@ -194,18 +289,29 @@
         });
 
         // 2) Upload to S3 with concurrency (tune 5–10)
-        await uploadWithConcurrency(uploads, 6, bump);
+        // Show first file name quickly if available
+        if (uploads.length > 0 && currentFileEl) currentFileEl.textContent = uploads[0].name;
+        await uploadWithConcurrency(uploads, 6, onFileStart, onFileDone);
 
         // 3) Tell server to create DDB items + enqueue SQS job
         await fetchJson('/upload/complete', { pid });
 
-        progress.value = 100;
+        // Final UI
+        uploadedBytes = totalBytes;
+        setProgressUI(100, 'Done', uploadedBytes, totalBytes, 0);
+
         window.location.href = '/dashboard';
       } catch (err) {
         console.error(err);
-        submitBtn.disabled = false;
-        spinner.classList.add('d-none');
-        btnText.textContent = 'Upload project';
+
+        if (submitBtn) submitBtn.disabled = false;
+        if (spinner) spinner.classList.add('d-none');
+        if (btnText) btnText.textContent = 'Upload project';
+        if (submitBtn) {
+          submitBtn.classList.remove('btn-secondary');
+          submitBtn.classList.add('btn-primary');
+        }
+
         alert('Upload failed: ' + (err && err.message ? err.message : err));
       }
     });
