@@ -76,19 +76,26 @@
   viewer.setFOV(84);
   viewer.setPointBudget(1500000);
   viewer.setBackground('white');
+  if (viewer.compass) {
+    viewer.compass.setEnabled ? viewer.compass.setEnabled(false) : (viewer.compass.enabled = false);
+  }
 
   const cloudUrl = '{{ cloud_js }}';
 
   Potree.loadPointCloud(cloudUrl, '{{ pid }}', (e) => {
-    viewer.scene.addPointCloud(e.pointcloud);
+    const pointcloud = e.pointcloud;
+    pointcloud.projection = 'EPSG:3857';
+    viewer.scene.addPointCloud(pointcloud);
     viewer.fitToScreen();
   });
 
   document.getElementById('btnMeasureDistance').onclick = () => {
     viewer.measuringTool.startInsertion({
       showDistances: true,
+      showArea: false,
       closed: false,
       maxMarkers: 2,
+      name: 'Distance',
     });
   };
 
@@ -97,6 +104,8 @@
       showDistances: true,
       showArea: true,
       closed: true,
+      maxMarkers: 8,
+      name: 'Area',
     });
   };
 
